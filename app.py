@@ -2,7 +2,7 @@
 import streamlit as st
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
-import requests  # 구글 시트 대신 인터넷 통신용 라이브러리 사용
+import requests
 
 # #2. 기본 테마 설정 및 디자인 적용
 st.set_page_config(
@@ -34,30 +34,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 🌐 초간단 데이터 저장소 주소 (가입 불필요!)
-# 이 주소에 투표 데이터가 실시간으로 계속 누적돼서 보관될 거야.
+# 🌐 데이터 저장소 정보 (JSONBin)
 DB_URL = "https://api.jsonbin.io/v3/b/6697b0aae41b4d34e4130006"
-# (혹시 데이터가 꼬이거나 초기화하고 싶을 때 쓸 헤더 정보)
 HEADERS = {
     "X-Master-Key": "$2a$10$Wb3rMeeO7q6r87D5IeX7UeYk1vshUu5A3g.UoFymk1YQp77YdGxei",
     "Content-Type": "application/json"
 }
 
-# 실시간 투표 데이터를 읽어오는 함수
+# 실시간 투표 데이터를 읽어오는 함수 (가져오기 실패 시 0, 0, 0 반환)
 def load_vote_data():
     try:
-        response = requests.get(DB_URL, headers={"X-Master-Key": HEADERS["X-Master-Key"]})
-        data = response.json()["record"]
-        return data["cold"], data["decent"], data["hot"]
-    except:
-        return 0, 0, 0
+        response = requests.get(DB_URL, headers={"X-Master-Key": HEADERS["X-Master-Key"]}, timeout=5)
+        if response.status_code == 200:
+            data = response.json()["record"]
+            return int(data.get("cold", 0)), int(data.get("decent", 0)), int(data.get("hot", 0))
+    except Exception:
+        pass
+    return 0, 0, 0
 
-# 투표 데이터 업데이트 함수
+# 투표 데이터 업데이트 함수 (성공 시 True, 실패 시 False 반환)
 def update_vote_data(cold, decent, hot):
-    payload = {"cold": cold, "decent": decent, "hot": hot}
-    requests.put(DB_URL, json=payload, headers=HEADERS)
+    try:
+        payload = {"cold": cold, "decent": decent, "hot": hot}
+        response = requests.put(DB_URL, json=payload, headers=HEADERS, timeout=5)
+        return response.status_code == 200
+    except Exception:
+        return False
 
-# 실시간 데이터 로드
+# 현재 누적 데이터 불러오기
 cold_votes, decent_votes, hot_votes = load_vote_data()
 
 # #4. 실시간 남은 시간 타이머 경고창 설정
@@ -66,14 +70,17 @@ def render_timer_warning():
     vote_time_param = st.query_params.get("last_vote_time")
     is_voted = False
     if vote_time_param is not None:
-        vote_time = datetime.fromisoformat(vote_time_param)
-        time_passed = datetime.now() - vote_time
-        if time_passed < timedelta(hours=1):
-            remaining = timedelta(hours=1) - time_passed
-            minutes = int(remaining.total_seconds() / 60)
-            seconds = int(remaining.total_seconds() % 60)
-            st.warning(f"이미 투표하셨습니다. {minutes}분 {seconds}초 뒤에 다시 투표할 수 있습니다.")
-            is_voted = True
+        try:
+            vote_time = datetime.fromisoformat(vote_time_param)
+            time_passed = datetime.now() - vote_time
+            if time_passed < timedelta(hours=1):
+                remaining = timedelta(hours=1) - time_passed
+                minutes = int(remaining.total_seconds() / 60)
+                seconds = int(remaining.total_seconds() % 60)
+                st.warning(f"이미 투표하셨습니다. {minutes}분 {seconds}초 뒤에 다시 투표할 수 있습니다.")
+                is_voted = True
+        except ValueError:
+            pass
     st.session_state["is_disabled_temp"] = is_voted
 
 render_timer_warning()
@@ -88,29 +95,36 @@ st.markdown("""
 <div class="school-subtitle">영신여자고등학교 스마트 온도투표소</div>
 """, unsafe_allow_html=True)
 
-# #6. 가로 배치 버튼 및 클릭 시 실시간 반영
+# #6. 버튼 클릭 시 데이터베이스에 확실히 반영한 후 화면 갱신
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("추워요", use_container_width=True, disabled=is_disabled):
-        update_vote_data(cold_votes + 1, decent_votes, hot_votes)
-        st.query_params["last_vote_time"] = datetime.now().isoformat()
-        st.success("투표가 완료되었습니다.")
-        st.rerun()
+        # 1을 더한 값을 DB에 전송하고, 성공했을 때만 시간 기록 및 새로고침을 실행함
+        if update_vote_data(cold_votes + 1, decent_votes, hot_votes):
+            st.query_params["last_vote_time"] = datetime.now().isoformat()
+            st.success("투표가 완료되었습니다.")
+            st.rerun()
+        else:
+            st.error("서버 저장 실패! 잠시 후 다시 시도해 주세요.")
 
 with col2:
     if st.button("적당해요", use_container_width=True, disabled=is_disabled):
-        update_vote_data(cold_votes, decent_votes + 1, hot_votes)
-        st.query_params["last_vote_time"] = datetime.now().isoformat()
-        st.success("투표가 완료되었습니다.")
-        st.rerun()
+        if update_vote_data(cold_votes, decent_votes + 1, hot_votes):
+            st.query_params["last_vote_time"] = datetime.now().isoformat()
+            st.success("투표가 완료되었습니다.")
+            st.rerun()
+        else:
+            st.error("서버 저장 실패! 잠시 후 다시 시도해 주세요.")
 
 with col3:
     if st.button("더워요", use_container_width=True, disabled=is_disabled):
-        update_vote_data(cold_votes, decent_votes, hot_votes + 1)
-        st.query_params["last_vote_time"] = datetime.now().isoformat()
-        st.success("투표가 완료되었습니다.")
-        st.rerun()
+        if update_vote_data(cold_votes, decent_votes, hot_votes + 1):
+            st.query_params["last_vote_time"] = datetime.now().isoformat()
+            st.success("투표가 완료되었습니다.")
+            st.rerun()
+        else:
+            st.error("서버 저장 실패! 잠시 후 다시 시도해 주세요.")
 
 st.markdown("---")
 
@@ -137,5 +151,7 @@ fig.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
     font=dict(color='#333333'),
-    showlegend=True)
+    showlegend=True
+)
+
 st.plotly_chart(fig)
