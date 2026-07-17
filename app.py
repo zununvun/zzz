@@ -1,17 +1,20 @@
-#1. 라이브러리 가져오기
+# #1. 라이브러리 가져오기
 import streamlit as st
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
+import pandas as pd
+# gspread 라이브러리로 교체
+import gspread
 
-# #2. 기본 테마(흰색 배경) 설정 및 영신여고 타이틀 폰트 디자인 적용
+# #2. 기본 테마 설정 및 디자인 적용
 st.set_page_config(
     page_title="체온:On",
     layout="centered",
     initial_sidebar_state="collapsed")
 
-st.markdown(""")
+st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@700&family=Noto+Sans+KR:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght=700&family=Noto+Sans+KR:wght=700&display=swap');
 
 .school-logo-title {
     font-family: 'Noto Serif KR', serif;
@@ -22,10 +25,10 @@ st.markdown(""")
 .school-logo-title img {
     height: 50px;}
 .school-title-text {
-    font-family: 'Noto Serif KR', serif; /* 여기도 고른 폰트로 일치시켰습니다 */
+    font-family: 'Noto Serif KR', serif;
     font-size: 40px;
     font-weight: 700;
-    color: #1BD170; /* 영신여고 포인트 초록색 */}
+    color: #1BD170;}
 .school-subtitle {
     font-size: 16px;
     color: #666666;
@@ -33,15 +36,24 @@ st.markdown(""")
 </style>
 """, unsafe_allow_html=True)
 
-# #3. 데이터 저장소 준비
-if "cold_votes" not in st.session_state:
-    st.session_state["cold_votes"] = 0
-if "decent_votes" not in st.session_state:
-    st.session_state["decent_votes"] = 0
-if "hot_votes" not in st.session_state:
-    st.session_state["hot_votes"] = 0
+SPREADSHEET_ID = "1sX9l76LK_PT_NIRyhaGQLvo_RrJASFfquIfR684II2s" 
 
-# #4. 실시간 남은 시간 타이머 경고창 및 자동 새로고침 설정
+try:
+    # 링크 공유된 시트에 익명으로 접근하는 설정
+    gc = gspread.public_api()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    worksheet = sh.get_worksheet(0) # 첫 번째 탭 선택
+    
+    # 데이터 읽어오기 (첫 번째 줄 데이터)
+    # 구글 시트 구조: A1:추워요, B1:적당해요, C1:더워요 / A2:숫자, B2:숫자, C2:숫자
+    cold_votes = int(worksheet.acell('A2').value or 0)
+    decent_votes = int(worksheet.acell('B2').value or 0)
+    hot_votes = int(worksheet.acell('C2').value or 0)
+except Exception as e:
+    st.error(f"구글 시트 연결 실패: {e}")
+    cold_votes, decent_votes, hot_votes = 0, 0, 0
+
+# #4. 실시간 남은 시간 타이머 경고창 설정
 @st.fragment(run_every="1s")
 def render_timer_warning():
     vote_time_param = st.query_params.get("last_vote_time")
@@ -69,38 +81,38 @@ st.markdown("""
 <div class="school-subtitle">영신여자고등학교 스마트 온도투표소</div>
 """, unsafe_allow_html=True)
 
-# #6. 가로 배치 버튼 및 클릭 시 주소창에 시간 기록
+# #6. 가로 배치 버튼 및 클릭 시 구글 시트에 즉시 반영
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("추워요", use_container_width=True, disabled=is_disabled):
-        st.session_state["cold_votes"] += 1
+        worksheet.update_acell('A2', cold_votes + 1) # A2 칸을 기존 값 + 1로 업데이트
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
 
 with col2:
     if st.button("적당해요", use_container_width=True, disabled=is_disabled):
-        st.session_state["decent_votes"] += 1
+        worksheet.update_acell('B2', decent_votes + 1) # B2 칸 업데이트
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
 
 with col3:
     if st.button("더워요", use_container_width=True, disabled=is_disabled):
-        st.session_state["hot_votes"] += 1
+        worksheet.update_acell('C2', hot_votes + 1) # C2 칸 업데이트
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
 
 st.markdown("---")
 
-# #7. 반원 그래프 데이터 준비 및 그리기
-total_votes = st.session_state["cold_votes"] + st.session_state["decent_votes"] + st.session_state["hot_votes"]
+# #7. 반원 그래프 그리기
+total_votes = cold_votes + decent_votes + hot_votes
 
 if total_votes > 0:
     labels = ["추워요", "적당해요", "더워요"]
-    values = [st.session_state["cold_votes"], st.session_state["decent_votes"], st.session_state["hot_votes"]]
+    values = [cold_votes, decent_votes, hot_votes]
     colors = ['#33A2FF', '#1BD170', '#FF5733']
 else:
     labels = ["아직 투표가 없습니다."]
@@ -114,7 +126,6 @@ fig = go.Figure(data=[go.Pie(
     domain=dict(y=[0.5, 1]), 
     marker=dict(colors=colors))])
 
-# 기본 흰색 테마용 레이아웃 설정
 fig.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
