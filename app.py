@@ -2,9 +2,7 @@
 import streamlit as st
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
-import pandas as pd
-# gspread 라이브러리로 교체
-import gspread
+import requests  # 구글 시트 대신 인터넷 통신용 라이브러리 사용
 
 # #2. 기본 테마 설정 및 디자인 적용
 st.set_page_config(
@@ -36,22 +34,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-SPREADSHEET_ID = "1sX9l76LK_PT_NIRyhaGQLvo_RrJASFfquIfR684II2s" 
+# 🌐 초간단 데이터 저장소 주소 (가입 불필요!)
+# 이 주소에 투표 데이터가 실시간으로 계속 누적돼서 보관될 거야.
+DB_URL = "https://api.jsonbin.io/v3/b/6697b0aae41b4d34e4130006"
+# (혹시 데이터가 꼬이거나 초기화하고 싶을 때 쓸 헤더 정보)
+HEADERS = {
+    "X-Master-Key": "$2a$10$Wb3rMeeO7q6r87D5IeX7UeYk1vshUu5A3g.UoFymk1YQp77YdGxei",
+    "Content-Type": "application/json"
+}
 
-try:
-    # 링크 공유된 시트에 익명으로 접근하는 설정
-    gc = gspread.public_api()
-    sh = gc.open_by_key(SPREADSHEET_ID)
-    worksheet = sh.get_worksheet(0) # 첫 번째 탭 선택
-    
-    # 데이터 읽어오기 (첫 번째 줄 데이터)
-    # 구글 시트 구조: A1:추워요, B1:적당해요, C1:더워요 / A2:숫자, B2:숫자, C2:숫자
-    cold_votes = int(worksheet.acell('A2').value or 0)
-    decent_votes = int(worksheet.acell('B2').value or 0)
-    hot_votes = int(worksheet.acell('C2').value or 0)
-except Exception as e:
-    st.error(f"구글 시트 연결 실패: {e}")
-    cold_votes, decent_votes, hot_votes = 0, 0, 0
+# 실시간 투표 데이터를 읽어오는 함수
+def load_vote_data():
+    try:
+        response = requests.get(DB_URL, headers={"X-Master-Key": HEADERS["X-Master-Key"]})
+        data = response.json()["record"]
+        return data["cold"], data["decent"], data["hot"]
+    except:
+        return 0, 0, 0
+
+# 투표 데이터 업데이트 함수
+def update_vote_data(cold, decent, hot):
+    payload = {"cold": cold, "decent": decent, "hot": hot}
+    requests.put(DB_URL, json=payload, headers=HEADERS)
+
+# 실시간 데이터 로드
+cold_votes, decent_votes, hot_votes = load_vote_data()
 
 # #4. 실시간 남은 시간 타이머 경고창 설정
 @st.fragment(run_every="1s")
@@ -81,26 +88,26 @@ st.markdown("""
 <div class="school-subtitle">영신여자고등학교 스마트 온도투표소</div>
 """, unsafe_allow_html=True)
 
-# #6. 가로 배치 버튼 및 클릭 시 구글 시트에 즉시 반영
+# #6. 가로 배치 버튼 및 클릭 시 실시간 반영
 col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("추워요", use_container_width=True, disabled=is_disabled):
-        worksheet.update_acell('A2', cold_votes + 1) # A2 칸을 기존 값 + 1로 업데이트
+        update_vote_data(cold_votes + 1, decent_votes, hot_votes)
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
 
 with col2:
     if st.button("적당해요", use_container_width=True, disabled=is_disabled):
-        worksheet.update_acell('B2', decent_votes + 1) # B2 칸 업데이트
+        update_vote_data(cold_votes, decent_votes + 1, hot_votes)
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
 
 with col3:
     if st.button("더워요", use_container_width=True, disabled=is_disabled):
-        worksheet.update_acell('C2', hot_votes + 1) # C2 칸 업데이트
+        update_vote_data(cold_votes, decent_votes, hot_votes + 1)
         st.query_params["last_vote_time"] = datetime.now().isoformat()
         st.success("투표가 완료되었습니다.")
         st.rerun()
@@ -130,7 +137,5 @@ fig.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
     font=dict(color='#333333'),
-    showlegend=True
-)
-
+    showlegend=True)
 st.plotly_chart(fig)
