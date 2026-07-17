@@ -1,16 +1,17 @@
 # #1. 라이브러리 가져오기
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import plotly.graph_objects as go
 from supabase import create_client
+
+KST = timezone(timedelta(hours=9))
 
 SUPABASE_URL = "https://xjitjdelxrjtbtykkdhp.supabase.co"
 SUPABASE_KEY = "sb_publishable_p9KWcfsuCGvks6r0QLhhPQ_huyHDg5e"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
-# #2. 기본 테마 설정 및 디자인 적용
+# #2. 디자인
 st.set_page_config(
     page_title="체온:On",
     layout="centered",
@@ -41,8 +42,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================
-# 🌐 Supabase 연결
-# ==========================
+# Supabase
 
 SUPABASE_URL = "https://xjitjdelxrjtbtykkdhp.supabase.co"
 
@@ -55,7 +55,6 @@ supabase = create_client(
 
 # ==========================
 # 투표 데이터 읽기
-# ==========================
 
 def load_vote_data():
     try:
@@ -66,21 +65,32 @@ def load_vote_data():
             .eq("id", 1)
             .single()
             .execute())
-
         data = response.data
 
-        return (data["cold"],
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+
+        if data["last_reset"] != today:
+            supabase.table("votes").update({
+                "cold": 0,
+                "decent": 0,
+                "hot": 0,
+                "last_reset": today
+            }).eq("id", 1).execute()
+
+            return 0, 0, 0
+
+        return (
+            data["cold"],
             data["decent"],
-            data["hot"])
+            data["hot"]
+        )
 
     except Exception as e:
         st.error(f"데이터 불러오기 실패 : {e}")
         return 0, 0, 0
 
-
 # ==========================
 # 투표 데이터 저장
-# ==========================
 
 def update_vote_data(cold, decent, hot):
     try:
@@ -102,8 +112,6 @@ def update_vote_data(cold, decent, hot):
 
 # 현재 데이터 불러오기
 cold_votes, decent_votes, hot_votes = load_vote_data()
-
-
 
 # #4. 실시간 남은 시간 타이머 경고창 설정
 @st.fragment(run_every="1s")
@@ -127,7 +135,7 @@ def render_timer_warning():
 render_timer_warning()
 is_disabled = st.session_state.get("is_disabled_temp", False)
 
-# #5. 영신여고 로고 및 커스텀 타이틀 표시
+# #5. 영신여고 로고
 st.markdown("""
 <div class="school-logo-title">
     <img src="https://i.namu.wiki/i/ZG85HJ4CEdDBlFGtk14SJ7FWNsPomgxyXcdkAH5_Pq9x5u4F68t02Z3WBqUZaB6dEfGzKY_RSRUZk_qBTp82AdCfjMKrU44P5M-IT53fdBrKTGwKkA5YgADVC0U8YWom2Cf0MBgvCVWjKb8J6KZilQ.webp" alt="로고">
@@ -138,7 +146,6 @@ st.markdown("""
 
 # ==========================
 # 투표 버튼
-# ==========================
 
 col1, col2, col3 = st.columns(3)
 
@@ -206,6 +213,9 @@ with col3:
 
 
 st.markdown("---")
+st.markdown(
+    "<h4 style='text-align:center;'>현재 우리 학교 다른 학생들은</h4>",
+    unsafe_allow_html=True)
 
 # #7. 그래프 그리기
 cold_votes, decent_votes, hot_votes = load_vote_data()
@@ -228,10 +238,17 @@ fig = go.Figure(data=[go.Pie(
     marker=dict(colors=colors))])
 
 fig.update_layout(
-    paper_bgcolor='rgba(0,0,0,0)',
-    plot_bgcolor='rgba(0,0,0,0)',
-    font=dict(color='#333333'),
-    showlegend=True
-)
+    width=650,
+    height=650,
+    annotations=[
+        dict(text=f"<b>{total_votes}명</b>",
+            x=0.5,
+            y=0.5,
+            font_size=26,
+            showarrow=False)],
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#333333", size=18),
+    showlegend=True)
 
-st.plotly_chart(fig) 
+st.plotly_chart(fig)
